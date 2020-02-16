@@ -1,1 +1,2 @@
 # Tensor-Completion
+This repository will host my Honor Project on Tensor Completion, which I will complete under the supervision of Guillaume Rabusseau. This project will be divided into three parts: Literature review of tensor completion algorithms and implementation of those algorithms in python, testing and evaluation of the algorithms using different metrics in order to identify their strengths and weakness and finally, if time permits, research of new algorithms and their evaluation.
