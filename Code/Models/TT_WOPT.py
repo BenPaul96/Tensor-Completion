@@ -136,12 +136,14 @@ class TT_WOPT_Model(object):
     def ncg(self, nb_epochs):
         """Use the Nonlinear Conjugate Gradient method to train the model."""
         x0 = list(self.factors.values())
-        x0 = flatten_factors(x0)
 
+        # Scipy takes in vectors, so we must flatten our factors to 1D, and then unflatten the optimized factors
+        # back to the original shape
+        x0 = flatten_factors(x0)
         res = optimize.minimize(self.forward, x0, method="CG", jac=self.backward,
                                 options={"disp": True, "maxiter": nb_epochs})
-
         factors = unflatten_factors(res.x, self.shapes)
+
         self.train_logs = res.fun / self.n_obs
         for n in range(self.n_dims):
             self.factors[f"A{n}"] = factors[n]
