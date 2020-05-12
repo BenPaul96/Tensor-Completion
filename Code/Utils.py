@@ -11,6 +11,72 @@ def f_unfold(tensor, mode=0):
     """
     return np.reshape(np.moveaxis(tensor, mode, 0), (tensor.shape[mode], -1), order='F')
 
+def f_fold(tensor, dims, mode=0):
+    """
+    F order folding function
+
+    :param tensor: nd_array
+    The unfolded tensor.
+    :param dims: list of ints
+    The dimensions of the original tensor.
+    :param mode: int
+    """
+
+    n_dims = len(dims)
+    order = np.concatenate(([mode], np.arange(mode), np.arange(mode+1, n_dims)))
+
+    dims_ordered = [dim for i, dim in enumerate(dims) if i != mode]
+    dims_ordered.insert(0, dims[mode])
+
+    return np.moveaxis(np.reshape(tensor, dims_ordered, order="F"), np.arange(n_dims), order)
+
+def TR_unfold(tensor, mode=0):
+    """
+    Unfolding function needed for TR-WOPT. It unfolds the tensor in the following order: (n x n+1, ..., N, 1, ..., n-1)
+    :param tensor: nd_array
+    :param mode: int
+    """
+
+    n_dims = len(tensor.shape)
+    dims_order = np.concatenate((np.arange(mode, n_dims), np.arange(mode)))
+
+    return np.reshape(np.moveaxis(tensor, dims_order, np.arange(n_dims)), (tensor.shape[mode], -1), order="F")
+
+def TR_fold(tensor, dims, mode=0):
+    """
+    Folding function needed for TR-WOPT. Fold a tensor unfolded in the following order: (n x n+1, ..., N, 1, ..., n-1)
+
+    :param tensor: nd_array
+    The unfolded tensor.
+    :param dims: list of ints
+    The dimensions of the original tensor.
+    :param mode: int
+    """
+
+    n_dims = len(dims)
+    order = np.concatenate((np.arange(mode, n_dims), np.arange(mode)))
+    dims_ordered = np.concatenate((dims[mode:], dims[:mode])).astype(int)
+
+    return np.moveaxis(np.reshape(tensor, dims_ordered, order="F"), np.arange(n_dims), order)
+
+
+def build_W(tensor):
+    """
+    Build the weights tensor, where each entry is one if the corresponding entry in the original tensor is observed,
+    and 0 if it is not (unobserved entries are set to np.nan in the original tensor).
+
+    :param tensor: nd_array
+    The original tensor
+    :return W: nd_array
+    A tensor of the same shape as <self.tensor>, with ones at the position of known entries and zeros elsewhere.
+    """
+
+    W = tensor.copy()
+    W[~np.isnan(W)] = 1
+    W = np.nan_to_num(W)
+
+    return W.astype(int)
+
 
 def flatten_factors(factors):
     """
@@ -103,3 +169,52 @@ def TT_to_tensor(factors, start=0, end=None):
         full_tensor = tl.reshape(full_tensor, (-1, rank_next))
 
     return np.squeeze(tl.reshape(full_tensor, full_shape))
+
+def TR_to_tensor(factors, n):
+    """
+    Computes G(!=n) [1].
+
+    :param factors: list of nd_array
+    The core tensors.
+    :param n: int
+
+    References
+    ----------
+    [1] Yuan, Cao, Zhao & Wu. (2017). Higher-dimension Tensor Completion via Low-rank Tensor Ring Decomposition.
+    """
+
+    # Edge cases for first and last mode
+    if n == 0:
+        rank_first = factors[1].shape[0]
+        rank_last = factors[-1].shape[2]
+        result = TT_to_tensor(factors[1:]).reshape((rank_first, -1, rank_last), order="F")
+        return result
+    elif n == len(factors) - 1:
+        rank_first = factors[0].shape[0]
+        rank_last = factors[n-1].shape[2]
+        result = TT_to_tensor(factors[:-1]).reshape((rank_first, -1, rank_last), order="F")
+        return result
+
+    rank_first = factors[n+1].shape[0]
+    rank_last = factors[n-1].shape[2]
+
+    right_factors = factors[n+1:]
+    left_factors = factors[:n]
+
+    dims_product = np.array([f.shape[1] for f in right_factors + left_factors]).prod()
+    full_shape = [dims_product]
+
+    full_shape.insert(0, rank_first)
+    full_shape.append(rank_last)
+
+    A = TT_to_tensor(right_factors)
+    B = TT_to_tensor(left_factors)
+
+    A = np.reshape(A, (-1, A.shape[-1]), order="F")
+    B = np.reshape(B, (B.shape[0], -1), order="F")
+
+    result = tl.dot(A, B).reshape(full_shape, order="F")
+    return result
+
+
+

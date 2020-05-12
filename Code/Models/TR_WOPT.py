@@ -1,31 +1,28 @@
 import numpy as np
 import tensorly as tl
-from Code.Utils import f_unfold, flatten_factors, unflatten_factors, TT_to_tensor, build_W
+from Code.Utils import f_unfold, f_fold, flatten_factors, unflatten_factors, build_W, TR_fold, TR_unfold, TR_to_tensor
 import scipy.optimize as optimize
 
-
-class TT_WOPT_Model(object):
+class TR_WOPT_Model(object):
     """
-    This class implements the TT-WOPT algorithm.
+    This class implements the TR-WOPT algorithm.
 
     References
     ----------
-    [1] Yuan, Longhao & Zhao, Qibin. (2017). Completion of High Order Tensor Data with Missing
-    Entries via Tensor-train Decomposition.
+    [1] Yuan, Cao, Zhao & Wu. (2017). Higher-dimension Tensor Completion via Low-rank Tensor Ring Decomposition.
     """
 
-    def __init__(self, tensor, ranks, lr=None, optimization="gradient_descent", seed=None):
+    def __init__(self, tensor, ranks, lr=None, optimization="gradient_descent"):
         """
+
         :param tensor: nd_array
         The tensor on which we want to execute the completion algorithm. The missing values should be np.nan.
         :param ranks: list of int
-        The TT-ranks. They limit the size of every core tensors [1]. Must start and end by 1.
+        The TR-ranks. They limit the size of every core tensors [1]. The first and last ranks must be equal.
         :param lr: float
         The learning rate for the optimization algorithm (None for ncg).
         :param optimization: "ncg" or "gradient_descent"
         The optimization algorithm used to optimize the factors matrices.
-        :param seed: int
-        If given, set the seed to obtain reproducible results.
         """
 
         self.tensor = tensor
@@ -42,8 +39,6 @@ class TT_WOPT_Model(object):
         self.Z = None
         self.train_logs = {}
         self.n_obs = self.W.sum()
-        if seed is not None:
-            np.random.seed(seed)
 
         # So we don't have to compute them every time
         self.Y = np.nan_to_num(self.tensor)
@@ -66,9 +61,18 @@ class TT_WOPT_Model(object):
             factors = unflatten_factors(factors, self.shapes)
 
         # Build the reconstruction of the tensor from the factors.
-        self.Z = self.W * tl.mps_tensor.mps_to_tensor(factors)
+        self.Z = self.W * self.reconstruct(factors)
+
         # Compute the objective function.
         return 0.5 * self.gamma - tl.tenalg.inner(self.Y, self.Z) + 0.5 * tl.tenalg.inner(self.Z, self.Z)
+
+    def reconstruct(self, factors):
+        """Reconstruct the tensor from the core tensors."""
+        n = 1
+        X_n = tl.dot(f_unfold(factors[n], 1), TR_unfold(TR_to_tensor(factors, n), 1).T)
+        X = TR_fold(X_n, self.dims, n)
+
+        return X
 
     def backward(self, factors=None):
         """Compute the gradients for each factor matrix."""
@@ -79,19 +83,13 @@ class TT_WOPT_Model(object):
 
         # Compute the reconstruction of the tensor from the factors if it was not already done.
         if self.Z is None:
-            self.Z = self.W * tl.mps_to_tensor(factors)
+            self.Z = self.W * self.reconstruct(factors)
 
         # Compute the gradient for each factors matrix.
         T = self.Z - self.Y
         for n in range(self.n_dims):
-            # Note that we inverse the order of the kronecker product compared to [1]. This is because all tensor
-            # operations are done in C order in tensorly instead of F order, so we have to adjust the kronecker product.
-            X = tl.tenalg.kronecker(
-                [tl.unfold(TT_to_tensor(factors, 0, n), n), tl.unfold(TT_to_tensor(factors, n+1, self.n_dims), 0)])
-
-            G = tl.dot(tl.base.unfold(T, n), X.T)
-            G = tl.base.fold(G, 1, (self.ranks[n], self.dims[n], self.ranks[n + 1]))
-
+            G = tl.dot(TR_unfold(T, n), TR_unfold(TR_to_tensor(factors, n), 1))
+            G = f_fold(G, self.shapes[n], 1)
             self.grads[f"G{n}"] = G
 
         if self.optimization == "ncg":
@@ -138,6 +136,11 @@ class TT_WOPT_Model(object):
     def predict(self):
         """Compute the reconstruction of the tensor from the factors matrices."""
         # We keep observed values, and fill the unobserved values with our predictions
-        W_complement = np.where((self.W == 0) | (self.W == 1), self.W^1, self.W)
-        prediction = W_complement * tl.mps_tensor.mps_to_tensor(list(self.factors.values())) + self.Y
+        W_complement = np.where((self.W == 0) | (self.W == 1), self.W ^ 1, self.W)
+        factors = list(self.factors.values())
+
+        prediction = W_complement * self.reconstruct(factors) + self.Y
         return prediction
+
+
+

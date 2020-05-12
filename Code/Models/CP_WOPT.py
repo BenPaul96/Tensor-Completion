@@ -1,6 +1,6 @@
 import numpy as np
 import tensorly as tl
-from Code.Utils import f_unfold, flatten_factors, unflatten_factors
+from Code.Utils import f_unfold, flatten_factors, unflatten_factors, build_W
 import scipy.optimize as optimize
 
 
@@ -34,7 +34,7 @@ class CP_WOPT_Model(object):
         self.factors = {}
         self.grads = {}
         self.shapes = [(self.dims[i], self.rank) for i in range(self.n_dims)]  # The shapes of the factors tensors.
-        self.W = self.build_W()
+        self.W = build_W(self.tensor)
         self.Z = None
         self.train_logs = {}
         self.n_obs = self.W.sum()
@@ -47,20 +47,6 @@ class CP_WOPT_Model(object):
 
         for n in range(self.n_dims):
             self.factors[f"A{n}"] = self.init_factors(n, self.initialization)
-
-    def build_W(self):
-        """
-        Build the weights tensor.
-
-        :return W: nd_array
-        A tensor of the same shape as <self.tensor>, with ones at the position of known entries and zeros elsewhere.
-        """
-
-        W = self.tensor.copy()
-        W[~np.isnan(W)] = 1
-        W = np.nan_to_num(W)
-
-        return W
 
     def init_factors(self, mode, initialization):
         """
@@ -170,4 +156,8 @@ class CP_WOPT_Model(object):
 
     def predict(self):
         """Compute the reconstruction of the tensor from the factors matrices."""
-        return tl.kruskal_tensor.kruskal_to_tensor((None, list(self.factors.values())))
+        # We keep observed values, and fill the unobserved values with our predictions
+        W_complement = np.where((self.W == 0) | (self.W == 1), self.W ^ 1, self.W)
+
+        prediction = W_complement * tl.kruskal_tensor.kruskal_to_tensor((None, list(self.factors.values()))) + self.Y
+        return prediction

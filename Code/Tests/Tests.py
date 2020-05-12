@@ -4,7 +4,8 @@ import tensorly as tl
 
 from Code.Models.CP_WOPT import CP_WOPT_Model
 from Code.Models.TT_WOPT import TT_WOPT_Model
-from Code.Utils import mask_img, TT_to_tensor
+from Code.Models.TR_WOPT import TR_WOPT_Model
+from Code.Utils import mask_img, TT_to_tensor, f_unfold, f_fold, TR_to_tensor, TR_fold, TR_unfold
 
 
 # Read lena image
@@ -15,13 +16,18 @@ img = cv2.resize(img, (200, 200))
 # Mask image
 img_missing = mask_img(img)
 
-def test_CP_training():
-    model = model = CP_WOPT_Model(img_missing, 24, 1e-6, init="SVD", optimization="ncg", seed=0)
+def test_CP_training(lr=1e-6):
+    model = model = CP_WOPT_Model(img_missing, 24, lr, init="SVD", optimization="ncg", seed=0)
     model.train(5000)
 
 def test_TT_training():
     model = TT_WOPT_Model(img_missing, (1, 24, 24, 1), optimization="ncg")
     model.train(5000)
+
+def test_TR_training(lr=1e-6):
+    model = TR_WOPT_Model(img_missing, (12, 24, 24, 12), lr, optimization="gradient_descent")
+    model.train(30)
+    model.predict()
 
 def test_tensorly_kronecker():
     A = np.array([[1,2], [3,4]])
@@ -133,6 +139,31 @@ def test_reconstruction_analytic():
     assert np.allclose(tl.unfold(X, n), result)
 
 
+def test_TR_reconstruction():
+    G1 = np.arange(1, 25).reshape((3, 2, 4))
+    G2 = np.arange(1, 25).reshape((4, 3, 2))
+    G3 = np.arange(1, 25).reshape((2, 4, 3))
+    factors = [G1, G2, G3]
 
-test_TT_reconstruction()
+    X = TT_to_tensor(factors)
+    X = np.einsum("r...r", X)
+
+    for n in range(3):
+        X_n = tl.dot(f_unfold(factors[n], 1), TR_unfold(TR_to_tensor(factors, n), 1).T)
+        X_construct = TR_fold(X_n, (2, 3, 4), n)
+        assert np.allclose(X, X_construct)
+
+
+
+def test_F_fold():
+    dims = (2,3,4,5,6)
+    X = np.arange(1, 721).reshape(dims)
+    for n in range(5):
+        X_unfold = f_unfold(X, n)
+        X_fold = f_fold(X_unfold, dims, n)
+        assert np.allclose(X, X_fold)
+
+
+
+test_TR_training(1e-6)
 
