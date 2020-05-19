@@ -1,6 +1,15 @@
 import numpy as np
 import tensorly as tl
 
+# Use cupy if available, else numpy
+use_cupy = False
+try:
+    import cupy as cp
+    xp = cp
+    use_cupy = True
+except:
+    xp = np
+
 def f_unfold(tensor, mode=0):
     """
     Simple unfolding function.
@@ -9,7 +18,7 @@ def f_unfold(tensor, mode=0):
         Moves the `mode` axis to the beginning and reshapes in Fortran order
         source: http://jeankossaifi.com/blog/unfolding.html
     """
-    return np.reshape(np.moveaxis(tensor, mode, 0), (tensor.shape[mode], -1), order='F')
+    return xp.reshape(xp.moveaxis(tensor, mode, 0), (tensor.shape[mode], -1), order='F')
 
 def f_fold(tensor, dims, mode=0):
     """
@@ -28,7 +37,7 @@ def f_fold(tensor, dims, mode=0):
     dims_ordered = [dim for i, dim in enumerate(dims) if i != mode]
     dims_ordered.insert(0, dims[mode])
 
-    return np.moveaxis(np.reshape(tensor, dims_ordered, order="F"), np.arange(n_dims), order)
+    return xp.moveaxis(xp.reshape(tensor, dims_ordered, order="F"), np.arange(n_dims), order)
 
 def TR_unfold(tensor, mode=0):
     """
@@ -40,7 +49,7 @@ def TR_unfold(tensor, mode=0):
     n_dims = len(tensor.shape)
     dims_order = np.concatenate((np.arange(mode, n_dims), np.arange(mode)))
 
-    return np.reshape(np.moveaxis(tensor, dims_order, np.arange(n_dims)), (tensor.shape[mode], -1), order="F")
+    return xp.reshape(xp.moveaxis(tensor, dims_order, np.arange(n_dims)), (tensor.shape[mode], -1), order="F")
 
 def TR_fold(tensor, dims, mode=0):
     """
@@ -57,7 +66,7 @@ def TR_fold(tensor, dims, mode=0):
     order = np.concatenate((np.arange(mode, n_dims), np.arange(mode)))
     dims_ordered = np.concatenate((dims[mode:], dims[:mode])).astype(int)
 
-    return np.moveaxis(np.reshape(tensor, dims_ordered, order="F"), np.arange(n_dims), order)
+    return xp.moveaxis(xp.reshape(tensor, dims_ordered, order="F"), np.arange(n_dims), order)
 
 
 def build_W(tensor):
@@ -72,8 +81,8 @@ def build_W(tensor):
     """
 
     W = tensor.copy()
-    W[~np.isnan(W)] = 1
-    W = np.nan_to_num(W)
+    W[~xp.isnan(W)] = 1
+    W = xp.nan_to_num(W)
 
     return W.astype(int)
 
@@ -89,7 +98,7 @@ def flatten_factors(factors):
     A 1D array containing the flattened factors tensors.
     """
 
-    return np.concatenate([factors[i].flatten() for i in range(len(factors))])
+    return xp.concatenate([factors[i].flatten() for i in range(len(factors))])
 
 
 def unflatten_factors(flattened_factors, shapes):
@@ -126,14 +135,37 @@ def mask_img(img, missing_rate=0.5):
     :return: 3D nd_array
     The masked image
     """
+
     n_missing_pixels = int(missing_rate * img.size/3)
-    mask = np.random.choice(img.size//3, n_missing_pixels, replace=False) * 3
+    mask = xp.random.choice(img.size//3, n_missing_pixels, replace=False) * 3
 
     img = img.astype(np.float64)
     for i in range(3):
         img.ravel()[mask + i] = np.nan
 
     return img
+
+
+def mask_tensor(tensor, missing_rate=0.5):
+    """
+    Randomly mask a fraction of the elements of a tensor.
+
+    :param tensor: nd_array
+    :param missing_rate: float
+    The fraction of pixels to remove from the image.
+
+    :return: nd_array
+    The masked tensor.
+    """
+
+    tensor_copy = tensor.copy()
+
+    n_missing_pixels = int(missing_rate * tensor.size)
+    mask = xp.random.choice(tensor.size, n_missing_pixels, replace=False)
+
+    tensor_copy.ravel()[mask] = np.nan
+
+    return tensor_copy
 
 def TT_to_tensor(factors, start=0, end=None):
     """
@@ -150,7 +182,7 @@ def TT_to_tensor(factors, start=0, end=None):
 
     # Take care of the edge cases G(<0) and G(> <n_dims>)
     if start == end:
-        return tl.tensor([1])
+        return xp.array([1])
 
     factors = factors[start:end]
 
@@ -168,7 +200,7 @@ def TT_to_tensor(factors, start=0, end=None):
         full_tensor = tl.dot(full_tensor, factor)
         full_tensor = tl.reshape(full_tensor, (-1, rank_next))
 
-    return np.squeeze(tl.reshape(full_tensor, full_shape))
+    return xp.squeeze(tl.reshape(full_tensor, full_shape))
 
 def TR_to_tensor(factors, n):
     """
@@ -210,8 +242,8 @@ def TR_to_tensor(factors, n):
     A = TT_to_tensor(right_factors)
     B = TT_to_tensor(left_factors)
 
-    A = np.reshape(A, (-1, A.shape[-1]), order="F")
-    B = np.reshape(B, (B.shape[0], -1), order="F")
+    A = xp.reshape(A, (-1, A.shape[-1]), order="F")
+    B = xp.reshape(B, (B.shape[0], -1), order="F")
 
     result = tl.dot(A, B).reshape(full_shape, order="F")
     return result

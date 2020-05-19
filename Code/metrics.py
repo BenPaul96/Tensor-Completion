@@ -33,7 +33,7 @@ def MSE(tensor, prediction):
     """
 
     diff = tensor - prediction
-    return tl.tenalg.inner(diff, diff) / tensor.size()
+    return tl.tenalg.inner(diff, diff) / tensor.size
 
 def PSNR(tensor, prediction):
     """

@@ -2,9 +2,9 @@ import cv2
 import numpy as np
 import tensorly as tl
 
-from Code.Models.CP_WOPT import CP_WOPT_Model
-from Code.Models.TT_WOPT import TT_WOPT_Model
-from Code.Models.TR_WOPT import TR_WOPT_Model
+from Models.CP_WOPT import CP_WOPT_Model
+from Models.TT_WOPT import TT_WOPT_Model
+from Models.TR_WOPT import TR_WOPT_Model
 from Code.Utils import mask_img, TT_to_tensor, f_unfold, f_fold, TR_to_tensor, TR_fold, TR_unfold
 
 
