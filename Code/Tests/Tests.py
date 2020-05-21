@@ -11,13 +11,13 @@ from Code.Utils import mask_img, TT_to_tensor, f_unfold, f_fold, TR_to_tensor, T
 # Read lena image
 img = cv2.imread('../data/lena.jpg', 1)
 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-img = cv2.resize(img, (200, 200))
+img = cv2.resize(img, (256, 256)) / 255
 
 # Mask image
 img_missing = mask_img(img)
 
 def test_CP_training(lr=1e-6):
-    model = model = CP_WOPT_Model(img_missing, 24, lr, init="SVD", optimization="ncg", seed=0)
+    model = model = CP_WOPT_Model(img_missing, 24, lr, init="normal", optimization="gradient_descent", seed=0)
     model.train(5000)
 
 def test_TT_training():
@@ -165,5 +165,5 @@ def test_F_fold():
 
 
 
-test_TR_training(1e-6)
+test_CP_training(1e-2)
 

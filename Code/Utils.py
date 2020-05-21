@@ -1,14 +1,19 @@
 import numpy as np
+from settings import xp, use_cupy
 import tensorly as tl
 
-# Use cupy if available, else numpy
-use_cupy = False
-try:
-    import cupy as cp
-    xp = cp
-    use_cupy = True
-except:
-    xp = np
+
+def set_gpu(xp_val, use_cupy_val):
+    global xp
+    global use_cupy
+
+    xp = xp_val
+    use_cupy = use_cupy_val
+
+def print_gpu_settings():
+    print("Utils xp:", xp)
+    print("Utils use_cupy:", use_cupy)
+
 
 def f_unfold(tensor, mode=0):
     """
@@ -247,6 +252,28 @@ def TR_to_tensor(factors, n):
 
     result = tl.dot(A, B).reshape(full_shape, order="F")
     return result
+
+
+# For the following image tensorization functions, see
+# Yuan, Longhao & Zhao, Qibin. (2017).
+# Completion of High Order Tensor Data with Missing Entries via Tensor-train Decomposition.
+def img_to_9D(img):
+    """Tensorize 3D image to 9D"""
+    # TODO Needs to be tested!
+    img_17D = img.reshape([2]*16 + [3], order="F")
+    img_9D = np.moveaxis(img_17D, [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 16], range(17))\
+        .reshape([4]*8 + [3], order="F")
+
+    return img_9D
+
+def img_9D_to_3D(img_9D, shape):
+    """Tensorize 9D image back to 3D"""
+    # TODO Needs to be tested!
+    img_17D = img_9D.reshape([2]*16 + [3], order="F")
+    img = np.moveaxis(img_17D, range(17), [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 16])\
+        .reshape(shape, order="F")
+
+    return img
 
 
 

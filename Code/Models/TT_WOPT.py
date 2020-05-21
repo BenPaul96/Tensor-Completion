@@ -1,18 +1,17 @@
 import numpy as np
+import settings
 import tensorly as tl
 import time
 
-from Code.Utils import f_unfold, flatten_factors, unflatten_factors, TT_to_tensor, build_W
+import Utils
+from Utils import f_unfold, flatten_factors, unflatten_factors, TT_to_tensor, build_W
 import scipy.optimize as optimize
 
-# Use cupy if available, else numpy
-use_cupy = False
+# Import cupy if available
 try:
     import cupy as cp
-    xp = cp
-    use_cupy = True
 except:
-    xp = np
+    pass
 
 
 class TT_WOPT_Model(object):
@@ -25,7 +24,7 @@ class TT_WOPT_Model(object):
     Entries via Tensor-train Decomposition.
     """
 
-    def __init__(self, tensor, ranks, lr=None, optimization="gradient_descent", seed=None):
+    def __init__(self, tensor, ranks, lr=None, optimization="gradient_descent", use_gpu=True):
         """
         :param tensor: nd_array
         The tensor on which we want to execute the completion algorithm. The missing values should be np.nan.
@@ -38,6 +37,11 @@ class TT_WOPT_Model(object):
         :param seed: int
         If given, set the seed to obtain reproducible results.
         """
+
+        settings.init(use_gpu)
+        self.xp = settings.xp
+        self.use_cupy = settings.use_cupy
+        Utils.set_gpu(self.xp, self.use_cupy)
 
         self.tensor = tensor
         self.ranks = ranks
@@ -53,11 +57,9 @@ class TT_WOPT_Model(object):
         self.Z = None
         self.train_logs = {}
         self.n_obs = self.W.sum()
-        if seed is not None:
-            xp.random.seed(seed)
 
         # So we don't have to compute them every time
-        self.Y = xp.nan_to_num(self.tensor)
+        self.Y = self.xp.nan_to_num(self.tensor)
         self.gamma = tl.tenalg.inner(self.Y, self.Y)
 
         # Initialize the core tensors
@@ -66,7 +68,7 @@ class TT_WOPT_Model(object):
 
     def init_factors(self, mode):
         """Initialize the factor matrix with a (0, 1) normal distribution"""
-        return xp.random.normal(loc=0, scale=1, size=self.shapes[mode])
+        return self.xp.random.normal(loc=0, scale=1, size=self.shapes[mode])
 
     def forward(self, factors=None):
         """Compute the objective function."""
@@ -74,21 +76,22 @@ class TT_WOPT_Model(object):
         if self.optimization == "gradient_descent":
             factors = list(self.factors.values())
         elif self.optimization == "ncg":
-            if use_cupy:
+            if self.use_cupy:
                 factors = cp.asarray(factors)
             factors = unflatten_factors(factors, self.shapes)
 
         # Build the reconstruction of the tensor from the factors.
         reconstruction = TT_to_tensor(factors)
-        if use_cupy:
+        if self.use_cupy:
             reconstruction = cp.asarray(reconstruction)
         self.Z = self.W * reconstruction
 
-        # Compute the objective function.
+        # Compute the objective function. We normalize the objective function by the number of observed entries.
         objective = 0.5 * self.gamma - tl.tenalg.inner(self.Y, self.Z) + 0.5 * tl.tenalg.inner(self.Z, self.Z)
+        objective = objective / self.n_obs
 
         # If using cupy, objective will be a cupy array of 1 element. So we extract that element.
-        if use_cupy:
+        if self.use_cupy:
             objective = objective.item()
 
         return objective
@@ -98,14 +101,14 @@ class TT_WOPT_Model(object):
         if self.optimization == "gradient_descent":
             factors = list(self.factors.values())
         elif self.optimization == "ncg":
-            if use_cupy:
+            if self.use_cupy:
                 factors = cp.asarray(factors)
             factors = unflatten_factors(factors, self.shapes)
 
         # Compute the reconstruction of the tensor from the factors if it was not already done.
         if self.Z is None:
             reconstruction = TT_to_tensor(factors)
-            if use_cupy:
+            if self.use_cupy:
                 reconstruction = cp.asarray(reconstruction)
             self.Z = self.W * reconstruction
 
@@ -122,62 +125,63 @@ class TT_WOPT_Model(object):
             elif n == self.n_dims - 1:
                 X = a
             else:
-                X = xp.kron(a, b)
+                X = self.xp.kron(a, b)
 
             G = tl.dot(tl.unfold(T, n), X.T)
             G = tl.fold(G, 1, (self.ranks[n], self.dims[n], self.ranks[n + 1]))
 
-            self.grads[f"G{n}"] = G
+            # We normalize the gradient by the number of observed entries.
+            self.grads[f"G{n}"] = G / self.n_obs
 
         if self.optimization == "ncg":
             grads = flatten_factors(list(self.grads.values()))
-            if use_cupy:
+            if self.use_cupy:
                 grads = cp.asnumpy(grads)
             return grads
 
     def update(self):
         """Update the factors matrices."""
         for n in range(self.n_dims):
-            self.factors[f"A{n}"] = xp.subtract(self.factors[f"A{n}"], self.lr * self.grads[f"G{n}"])
+            self.factors[f"A{n}"] = self.xp.subtract(self.factors[f"A{n}"], self.lr * self.grads[f"G{n}"])
 
-    def train(self, nb_epochs=5):
+    def train(self, nb_epochs=5, gtol=1e-5):
         """Train the model using the specified optimization algorithm."""
         if self.optimization == "gradient_descent":
             self.gradient_descent(nb_epochs)
         elif self.optimization == "ncg":
-            self.ncg(nb_epochs)
+            self.ncg(nb_epochs, gtol)
 
     def gradient_descent(self, nb_epochs=5):
         """Use the gradient descent algorithm to train the model."""
         for epoch in range(nb_epochs):
             # We write the normalized loss to our train logs
-            loss = self.forward() / self.n_obs
+            loss = self.forward()
             self.train_logs[f"Epoch{epoch}"] = loss
 
             self.backward()
             self.update()
             print(f"Epoch: {epoch}, Loss: {loss}")
 
-    def ncg(self, nb_epochs):
+    def ncg(self, nb_epochs, gtol):
         """Use the Nonlinear Conjugate Gradient method to train the model."""
         x0 = list(self.factors.values())
 
         # Scipy takes in vectors, so we must flatten our factors to 1D, and then unflatten the optimized factors
         # back to the original shape
         x0 = flatten_factors(x0)
-        if use_cupy:
+        if self.use_cupy:
             x0 = cp.asnumpy(x0)
 
         res = optimize.minimize(self.forward, x0, method="CG", jac=self.backward,
-                                options={"disp": True, "maxiter": nb_epochs})
+                                options={"disp": True, "maxiter": nb_epochs, "gtol": gtol})
         factors = res.x
 
-        if use_cupy:
+        if self.use_cupy:
             factors = cp.asarray(factors)
         factors = unflatten_factors(factors, self.shapes)
 
         # We write the normalized loss the our train logs
-        self.train_logs = res.fun / self.n_obs
+        self.train_logs = res.fun
         for n in range(self.n_dims):
             self.factors[f"A{n}"] = factors[n]
 
@@ -187,7 +191,7 @@ class TT_WOPT_Model(object):
 
         if use_observed:
             # We keep observed values, and fill the unobserved values with our predictions
-            W_complement = xp.where((self.W == 0) | (self.W == 1), self.W^1, self.W)
+            W_complement = self.xp.where((self.W == 0) | (self.W == 1), self.W^1, self.W)
             prediction = W_complement * reconstruction + self.Y
         else:
             prediction = reconstruction
